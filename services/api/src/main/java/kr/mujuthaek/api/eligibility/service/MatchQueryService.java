@@ -30,7 +30,8 @@ import org.springframework.transaction.annotation.Transactional;
  *
  * <p>순서: 지원 가능 → 확인 필요, 그 안에서 내 순위(1순위 → 2순위 → … → 순위 없음), 그다음 마감 빠른 순이에요.
  *
- * <p>지역으로는 거르지 않아요. 공고마다 regionCodes를 실어 보내면 프론트가 걸러요. 입력과 결과는 저장하거나 로그에 남기지 않아요.
+ * <p>지역으로는 거르지 않아요. 공고마다 regionCodes를 실어 보내면 프론트가 걸러요. 창업지원 사업은 틀에 지역 조건이 없으면 지원 지역(regionCodes)을
+ * 판정에도 넣어 사는 곳이 밖이면 확인 필요로 둬요 (FrameJudge). 입력과 결과는 저장하거나 로그에 남기지 않아요.
  */
 @Service
 @Transactional(readOnly = true)
@@ -120,7 +121,7 @@ public class MatchQueryService {
                     : new OneJudgment(
                         n,
                         spec == FrameSpec.STARTUP_SUPPORT
-                            ? judgments.judgeStartupSupport(n.frame(), applicant)
+                            ? judgments.judgeStartupSupport(n.frame(), applicant, n.regionCodes())
                             : judgments.judgeBusinessSpace(n.frame(), applicant)));
   }
 
@@ -140,7 +141,11 @@ public class MatchQueryService {
         items.add(MatchMapper.notReady(notice));
         continue;
       }
-      FrameJudgment judgment = judgments.judge(frame, applicant);
+      // 창업지원 사업만 지원 지역을 넘겨요. 사업공간의 지역은 공간이 있는 곳이라 신청 자격이 아니에요
+      FrameJudgment judgment =
+          spec == FrameSpec.STARTUP_SUPPORT
+              ? judgments.judge(frame, applicant, notice.regionCodes())
+              : judgments.judge(frame, applicant);
       if (includeIneligible || judgment.result() != Eligibility.INELIGIBLE) {
         items.add(MatchMapper.judged(notice, judgment));
       }

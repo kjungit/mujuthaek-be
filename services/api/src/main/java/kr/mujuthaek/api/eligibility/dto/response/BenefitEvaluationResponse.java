@@ -11,7 +11,7 @@ import kr.mujuthaek.api.eligibility.rule.benefit.BenefitJudge;
  * 않아요.
  *
  * @param reason 사람 확인 전이라 확인 필요로 둔 경우의 이유
- * @param conditions 조건 그룹 (원문 순서). 그룹 안 조건이 둘 이상이면 "다음 중 하나"예요
+ * @param conditions 조건 그룹 (원문 순서, 혜택 지역 그룹 key REGION이 붙으면 맨 뒤). 그룹 안 조건이 둘 이상이면 "다음 중 하나"예요
  * @param notes 판정하지 않는 안내 (중복 수혜 불가, 선정 우선순위)
  * @param annualAmountWon 1년에 받을 수 있는 돈 (대출·금액 모름이면 0)
  */

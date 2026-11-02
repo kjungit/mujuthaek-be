@@ -2,6 +2,7 @@ package kr.mujuthaek.api.eligibility.service;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.List;
 import java.util.Map;
 import kr.mujuthaek.api.common.exception.CustomException;
 import kr.mujuthaek.api.common.exception.ErrorCode;
@@ -56,21 +57,44 @@ public class JudgmentQueryService {
 
   /** 창업지원 사업 판정. 틀: startup-support-judgment.v1. */
   public JudgmentResult judgeStartupSupport(JsonNode frame, JudgmentApplicantRequest applicant) {
-    return judge(FrameSpec.STARTUP_SUPPORT, frame, applicant);
+    return judgeStartupSupport(frame, applicant, null);
+  }
+
+  /**
+   * 창업지원 사업 판정 + 지원 지역.
+   *
+   * @param programRegions 사업의 지원 지역 법정동코드. 틀에 지역 조건이 없으면 사는 곳과 견줘 확인 필요로 둬요 (전국은 빈 목록, 모르면 null)
+   */
+  public JudgmentResult judgeStartupSupport(
+      JsonNode frame, JudgmentApplicantRequest applicant, List<String> programRegions) {
+    return judge(FrameSpec.STARTUP_SUPPORT, frame, applicant, programRegions);
+  }
+
+  private JudgmentResult judge(FrameSpec spec, JsonNode frame, JudgmentApplicantRequest applicant) {
+    return judge(spec, frame, applicant, null);
   }
 
   /** 공고마다 묻는 예/아니요 답은 받지 않아요 (2026-10-29 결정). 질문 조건은 늘 원문 확인이에요. */
-  private JudgmentResult judge(FrameSpec spec, JsonNode frame, JudgmentApplicantRequest applicant) {
+  private JudgmentResult judge(
+      FrameSpec spec,
+      JsonNode frame,
+      JudgmentApplicantRequest applicant,
+      List<String> programRegions) {
     if (frame == null || frame.isNull()) {
       throw new CustomException(ErrorCode.VALIDATION_FAILED, "frame: 판정 틀이 있어야 해요");
     }
     Frame read = FrameReader.read(frame, spec);
     Applicant input = ApplicantMapper.toApplicant(applicant, Map.of());
-    return JudgmentMapper.toResult(judge(read, input));
+    return JudgmentMapper.toResult(judge(read, input, programRegions));
   }
 
   /** 읽은 틀 하나를 판정해요. 틀에 기준일이 없으면(창업지원) 오늘(한국 시간) 기준이에요. */
   FrameJudgment judge(Frame frame, Applicant applicant) {
-    return judge.judge(frame, applicant, LocalDate.now(KOREA));
+    return judge(frame, applicant, null);
+  }
+
+  /** 지원 지역까지 넘겨 판정해요 (창업지원 사업). */
+  FrameJudgment judge(Frame frame, Applicant applicant, List<String> programRegions) {
+    return judge.judge(frame, applicant, LocalDate.now(KOREA), programRegions);
   }
 }

@@ -246,6 +246,30 @@ class JudgeTest {
   }
 
   @Test
+  void groupWithNoConditionsAtAllIsNotEligible() {
+    // 견줄 무주택·소득이 없어도 조건이 하나도 없는 대상은 누구나 지원 가능이 되니 확인 필요예요 (사업 틀 FrameJudge와 같아요)
+    Judgment empty =
+        new Judgment(
+            REF,
+            List.of(),
+            List.of(
+                new Judgment.Group("youth", "청년", List.of(new Judgment.Age(basics("age"), 19, 20))),
+                new Judgment.Group("all", "그 밖의 주택형·단지", List.of())));
+    var result = Judge.evaluate(empty, new ApplicantBuilder().birthMonth(1997, 3).build());
+
+    assertThat(result.overall()).isEqualTo(Overall.NEEDS_INPUT);
+    assertThat(result.targets().get(1).items())
+        .singleElement()
+        .satisfies(
+            i -> {
+              assertThat(i.key()).isEqualTo(Judge.PARTIAL_GROUP);
+              assertThat(i.label()).isEqualTo("이 대상에는 정리된 자격 조건이 없어요");
+              assertThat(i.status()).isEqualTo(Status.UNKNOWN);
+              assertThat(i.needs()).isEmpty();
+            });
+  }
+
+  @Test
   void baseInsideAnyOfCountsAndQuestionsInsideAnyOfDoNot() {
     // 무주택 예외처럼 택일 안에 있는 무주택도 기본 자격이에요. 택일 안의 질문은 다른 선택지로 충족될 수 있어 질문으로 치지 않아요
     Judgment.AnyOf homelessOrException =

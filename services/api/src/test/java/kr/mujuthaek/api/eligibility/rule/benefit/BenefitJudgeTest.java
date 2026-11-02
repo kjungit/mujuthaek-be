@@ -147,6 +147,18 @@ class BenefitJudgeTest {
   }
 
   @Test
+  void 거주_줄은_덜_자세히_넣었으면_이사가_아니라_더_넣으라고_한다() {
+    Condition suwon = c("RESIDENCE", Map.of("regions", List.of("41110")), 1);
+    Item sidoOnly = item(suwon, a().region("41000").build());
+    assertThat(sidoOnly.status()).isEqualTo(Status.UNKNOWN);
+    assertThat(sidoOnly.reason()).isEqualTo("사는 곳을 시군구까지 넣으면 판정돼요");
+    assertThat(sidoOnly.needs()).containsExactly("applicant.regionCode");
+    Item cityOnly =
+        item(c("RESIDENCE", Map.of("regions", List.of("41117")), 1), a().region("41110").build());
+    assertThat(cityOnly.reason()).isEqualTo("사는 곳을 구까지 넣으면 판정돼요");
+  }
+
+  @Test
   void 같은_그룹은_또는_다른_그룹은_그리고() {
     Applicant single = a().marital("SINGLE").birthMonth(1997, 3).build();
     var result =
@@ -205,5 +217,193 @@ class BenefitJudgeTest {
     assertThat(result.reason()).isNotNull();
     assertThat(BenefitJudge.judge(List.of(), false, a().build(), TODAY, MEDIAN).overall())
         .isEqualTo(Overall.ELIGIBLE);
+  }
+
+  // ── 혜택 지역 (2026-11-02 운영: 고령군·경기 혜택이 서울 사용자에게 지원 가능) ──
+
+  private static final BenefitJudge.Area GORYEONG =
+      new BenefitJudge.Area("SIGUNGU", List.of("47830"), List.of("경상북도 고령군"));
+
+  private static BenefitJudge.Result judgeIn(BenefitJudge.Area area, Applicant a, Condition... cs) {
+    return BenefitJudge.judge(List.of(cs), false, area, a, TODAY, MEDIAN);
+  }
+
+  @Test
+  void 지역_한정_혜택은_다른_지역에_살면_지역_그룹이_확인_필요() {
+    var result =
+        judgeIn(
+            GORYEONG,
+            a().region("11440").birthMonth(1996, 5).build(),
+            c("AGE", Map.of("min", 19, "max", 39), 1));
+    assertThat(result.overall()).isEqualTo(Overall.NEEDS_INPUT);
+    assertThat(result.groups()).hasSize(2);
+    Item region = result.groups().getLast().items().getFirst();
+    assertThat(region.key()).isEqualTo(BenefitJudge.REGION);
+    assertThat(region.label()).isEqualTo("지역 · 경상북도 고령군");
+    assertThat(region.status()).isEqualTo(Status.UNKNOWN);
+    assertThat(region.reason()).isEqualTo("혜택 지역이 사는 곳과 달라요. 다른 지역 사람도 받을 수 있는지 원문에서 확인해 주세요");
+    assertThat(region.needs()).as("이사로 풀리는 게 아니라 원문을 봐야 해요").isEmpty();
+  }
+
+  @Test
+  void 지역_이름이_없으면_코드_대신_혜택_시행_지역이라고_쓴다() {
+    // 온통청년 혜택은 지역 코드만 있고 이름이 없어요
+    BenefitJudge.Area seoulWide =
+        new BenefitJudge.Area("SIGUNGU", List.of("11110", "11140", "11170"), List.of());
+    Item region =
+        judgeIn(seoulWide, a().region("47830").build()).groups().getLast().items().getFirst();
+    assertThat(region.label()).isEqualTo("지역 · 혜택 시행 지역");
+    assertThat(region.status()).isEqualTo(Status.UNKNOWN);
+  }
+
+  @Test
+  void 일반구에_살면_그_시의_혜택을_받는다() {
+    // 시(41110 수원시)와 그 일반구(41117 영통구)는 같은 지역이에요
+    BenefitJudge.Area suwon = new BenefitJudge.Area("SIGUNGU", List.of("41110"), List.of("수원시"));
+    Applicant yeongtong = a().region("41117").build();
+    assertThat(judgeIn(suwon, yeongtong).overall()).isEqualTo(Overall.ELIGIBLE);
+    assertThat(item(c("RESIDENCE", Map.of("regions", List.of("41110")), 1), yeongtong).status())
+        .as("거주 조건 줄도 같은 비교")
+        .isEqualTo(Status.MET);
+    BenefitJudge.Area cheongjuDistricts =
+        new BenefitJudge.Area("SIGUNGU", List.of("43111", "43112"), List.of("상당구", "서원구"));
+    Item cityOnly =
+        judgeIn(cheongjuDistricts, a().region("43110").build())
+            .groups()
+            .getLast()
+            .items()
+            .getFirst();
+    assertThat(cityOnly.status()).isEqualTo(Status.UNKNOWN);
+    assertThat(cityOnly.needs())
+        .as("다른 지역이 아니라 구까지 넣으면 판정돼요")
+        .containsExactly("applicant.regionCode");
+    assertThat(cityOnly.reason()).as("시군구는 이미 골랐으니 구까지").isEqualTo("사는 곳을 구까지 넣으면 판정돼요");
+    BenefitJudge.Area yeongdong =
+        new BenefitJudge.Area("SIGUNGU", List.of("43740"), List.of("충청북도 영동군"));
+    Item jeungpyeong =
+        judgeIn(yeongdong, a().region("43745").build()).groups().getLast().items().getFirst();
+    assertThat(jeungpyeong.status())
+        .as("앞 4자리가 같은 군(증평)은 영동군 혜택 지역이 아니에요")
+        .isEqualTo(Status.UNKNOWN);
+    assertThat(jeungpyeong.needs()).isEmpty();
+  }
+
+  @Test
+  void 지역_한정_혜택은_그_지역에_살면_충족() {
+    var result =
+        judgeIn(
+            GORYEONG,
+            a().region("47830").birthMonth(1996, 5).build(),
+            c("AGE", Map.of("min", 19, "max", 39), 1));
+    assertThat(result.overall()).isEqualTo(Overall.ELIGIBLE);
+    assertThat(result.groups().getLast().items().getFirst().status()).isEqualTo(Status.MET);
+    BenefitJudge.Area gyeonggi = new BenefitJudge.Area("SIDO", List.of("41"), List.of("경기도"));
+    assertThat(
+            judgeIn(gyeonggi, a().region("41110").build(), c("HOMELESS", Map.of(), 1))
+                .groups()
+                .getLast()
+                .items()
+                .getFirst()
+                .status())
+        .as("시도 혜택은 그 시도의 시군구에 살면 충족")
+        .isEqualTo(Status.MET);
+  }
+
+  @Test
+  void 사는_곳이_없거나_시도만_있으면_입력을_받는다() {
+    BenefitJudge.Area suwon = new BenefitJudge.Area("SIGUNGU", List.of("41110"), List.of("수원시"));
+    Item none =
+        judgeIn(suwon, a().build(), c("AGE", Map.of("min", 19, "max", 39), 1))
+            .groups()
+            .getLast()
+            .items()
+            .getFirst();
+    assertThat(none.status()).isEqualTo(Status.UNKNOWN);
+    assertThat(none.needs()).containsExactly("applicant.regionCode");
+    Item sidoOnly =
+        judgeIn(suwon, a().region("41000").build(), c("AGE", Map.of("min", 19, "max", 39), 1))
+            .groups()
+            .getLast()
+            .items()
+            .getFirst();
+    assertThat(sidoOnly.status()).isEqualTo(Status.UNKNOWN);
+    assertThat(sidoOnly.reason()).isEqualTo("사는 곳을 시군구까지 넣으면 판정돼요");
+  }
+
+  @Test
+  void 거주_조건_줄이_있거나_전국이거나_지역을_모르면_지역_그룹을_더하지_않는다() {
+    Applicant seoul = a().region("11440").birthMonth(1996, 5).build();
+    Condition age = c("AGE", Map.of("min", 19, "max", 39), 1);
+    Condition residence = c("RESIDENCE", Map.of("regions", List.of("47830")), 2);
+    assertThat(judgeIn(GORYEONG, seoul, age, residence).groups())
+        .as("거주 조건 줄이 이미 지역을 봐요")
+        .extracting(BenefitJudge.Group::group)
+        .containsExactly(1, 2);
+    assertThat(
+            judgeIn(new BenefitJudge.Area("NATIONWIDE", List.of(), List.of()), seoul, age)
+                .overall())
+        .isEqualTo(Overall.ELIGIBLE);
+    assertThat(
+            judgeIn(new BenefitJudge.Area("UNKNOWN", List.of(), List.of()), seoul, age).overall())
+        .isEqualTo(Overall.ELIGIBLE);
+    assertThat(judgeIn(null, seoul, age).overall()).isEqualTo(Overall.ELIGIBLE);
+  }
+
+  @Test
+  void 조건_없는_지역_한정_혜택도_지역으로_판정한다() {
+    assertThat(judgeIn(GORYEONG, a().region("11440").build()).overall())
+        .isEqualTo(Overall.NEEDS_INPUT);
+    assertThat(judgeIn(GORYEONG, a().region("47830").build()).overall())
+        .isEqualTo(Overall.ELIGIBLE);
+  }
+
+  // ── 노숙을 말하는 무주택 줄 (2026-11-02 운영 「행려자 구호비 지급」) ──
+
+  @Test
+  void 노숙을_말하는_무주택_줄은_집이_없어도_확인_필요() {
+    Condition street =
+        new Condition(
+            "HOMELESS", Map.of("basis", "PERSON"), 1, true, "일정한 주거 없이 노숙생활을 하는 것으로 확인된 자");
+    Item item = item(street, a().homelessYears("3_5").build());
+    assertThat(item.status()).isEqualTo(Status.UNKNOWN);
+    assertThat(item.reason()).isEqualTo("노숙 여부는 원문을 확인해 주세요");
+    assertThat(item.needs()).isEmpty();
+    assertThat(item(street, a().homeOwner(true).build()).status())
+        .as("집이 있어도 지원 불가로 내리지 않아요 (무주택자 또는 노숙인 같은 글이 섞일 수 있어요)")
+        .isEqualTo(Status.UNKNOWN);
+  }
+
+  @Test
+  void 행려자_구호비_모양은_서울_무주택_청년에게_확인_필요() {
+    var result =
+        judgeIn(
+            GORYEONG,
+            a().region("11440").birthMonth(1996, 5).homelessYears("3_5").build(),
+            new Condition(
+                "HOMELESS", Map.of("basis", "PERSON"), 1, true, "일정한 주거 없이 노숙생활을 하는 것으로 확인된 자"));
+    assertThat(result.overall()).isEqualTo(Overall.NEEDS_INPUT);
+    assertThat(result.groups())
+        .extracting(BenefitJudge.Group::status)
+        .containsExactly(Status.UNKNOWN, Status.UNKNOWN);
+  }
+
+  @Test
+  void 주거_상황_단어는_무주택이나_소유를_함께_말하지_않을_때만_확인_필요() {
+    assertThat(BenefitJudge.notOwnership("쪽방 거주자")).isEqualTo("주거 상황 조건은 원문을 확인해 주세요");
+    assertThat(BenefitJudge.notOwnership("고시원 등 비주택 거주자")).isNotNull();
+    assertThat(BenefitJudge.notOwnership("노숙인 등 주거취약계층 매입임대주택 입주 대상자")).isNotNull();
+    assertThat(BenefitJudge.notOwnership("주거취약계층 중 무주택 세대구성원")).isNull();
+    assertThat(BenefitJudge.notOwnership("무주택 세대주")).isNull();
+    assertThat(BenefitJudge.notOwnership("주택을 소유하지 않은 세대주")).isNull();
+    assertThat(BenefitJudge.notOwnership("관내에 일정한 주소를 두고 거주하는 무주택자")).isNull();
+    assertThat(BenefitJudge.notOwnership("주택 등 일정한 주거지가 없는 자")).isEqualTo("노숙 여부는 원문을 확인해 주세요");
+    assertThat(BenefitJudge.notOwnership("주거지가 일정하지 않은 자")).isEqualTo("노숙 여부는 원문을 확인해 주세요");
+    assertThat(BenefitJudge.notOwnership("쪽방·고시원 등 비주택에 3개월 이상 거주한 무주택자"))
+        .as("비주택 거주가 요건이면 무주택을 함께 말해도 더 좁아요")
+        .isEqualTo("주거 상황 조건은 원문을 확인해 주세요");
+    assertThat(BenefitJudge.notOwnership("주택을 소유하지 않은 쪽방 거주자")).isNotNull();
+    assertThat(item(c("HOMELESS", Map.of(), 1), a().homelessYears("1_3").build()).status())
+        .as("보통 무주택 줄은 그대로 충족")
+        .isEqualTo(Status.MET);
   }
 }

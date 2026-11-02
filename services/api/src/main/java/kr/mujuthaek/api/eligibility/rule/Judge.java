@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
  * 매입임대」: 「총자산·자동차 기준은 소득 50% 이하인 자에 한함」이 자산·자동차만 가진 대상이 되어, 인천에 사는 61세 집 있는 미혼도 지원 가능). 그래서 질문 없이
  * 자동으로 판정되는 대상에 같은 공고의 다른 대상이 가진 무주택·소득 조건이 없으면, 그 대상은 확인 필요 항목({@link #PARTIAL_GROUP})을 하나 더 받아 지원
  * 가능까지 가지 않아요. 질문이 있는 대상은 질문이 늘 확인 필요라 그대로 둬요. 추출이 주택형·단지별 조건으로 대상을 나눈 공고(「그 밖의 주택형·단지」 대상이 있음)는
- * 대상마다 소득 기준이 다른 게 원문 그대로라 견주지 않아요.
+ * 대상마다 소득 기준이 다른 게 원문 그대로라 견주지 않아요. 공통 조건도 그 대상 조건도 없는 대상도 같은 항목을 받아요.
  *
  * <p>결과에는 사용자가 보낸 값을 넣지 않아요.
  */
@@ -110,21 +110,28 @@ public final class Judge {
     Set<Base> lacking = EnumSet.copyOf(noticeBases);
     lacking.removeAll(bases(common));
     lacking.removeAll(bases(group.criteria()));
-    if (lacking.isEmpty()) {
-      return Optional.empty();
+    if (!lacking.isEmpty()) {
+      String names = lacking.stream().map(b -> b.label).collect(Collectors.joining("·"));
+      return Optional.of(partial(group, "다른 대상에 있는 " + names + " 조건이 이 대상에는 없어요"));
     }
-    String names = lacking.stream().map(b -> b.label).collect(Collectors.joining("·"));
-    return Optional.of(
-        new Item(
-            group.id() + "-partial",
-            PARTIAL_GROUP,
-            "다른 대상에 있는 " + names + " 조건이 이 대상에는 없어요",
-            Status.UNKNOWN,
-            "원문에서 이 대상의 자격 조건을 확인해 주세요",
-            List.of(),
-            null,
-            null,
-            null));
+    // 견줄 기본 자격이 없어도 조건이 하나도 없는 대상은 누구나 지원 가능이 되니 확인 필요로 둬요 (사업 틀의 FrameJudge와 같아요)
+    if (common.isEmpty() && group.criteria().isEmpty()) {
+      return Optional.of(partial(group, "이 대상에는 정리된 자격 조건이 없어요"));
+    }
+    return Optional.empty();
+  }
+
+  private static Item partial(Judgment.Group group, String label) {
+    return new Item(
+        group.id() + "-partial",
+        PARTIAL_GROUP,
+        label,
+        Status.UNKNOWN,
+        "원문에서 이 대상의 자격 조건을 확인해 주세요",
+        List.of(),
+        null,
+        null,
+        null);
   }
 
   private static boolean asks(List<Judgment.Criterion> criteria) {

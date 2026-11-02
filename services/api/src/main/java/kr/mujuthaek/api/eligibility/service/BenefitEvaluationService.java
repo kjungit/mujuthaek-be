@@ -164,7 +164,15 @@ public class BenefitEvaluationService {
         new Judged(
             c.benefit(),
             BenefitJudge.judge(
-                c.conditions(), c.benefit().needsReview(), applicant, today, benchmarks),
+                c.conditions(),
+                c.benefit().needsReview(),
+                new BenefitJudge.Area(
+                    c.benefit().regionScope(),
+                    c.benefit().regionCodes(),
+                    c.benefit().regionNames()),
+                applicant,
+                today,
+                benchmarks),
             annualWon(c.benefit()));
   }
 

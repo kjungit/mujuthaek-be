@@ -94,6 +94,13 @@ final class PersonRules {
         Evaluation site = sitePlace(c, summary, a, c.regionCodes());
         Verdict either = Verdict.any(List.of(home.verdict(), site.verdict()));
         if (either == Verdict.UNKNOWN) {
+          // 한쪽이 이미 밖이면 모르는 쪽의 안내만 줘요 (예비창업자에게 사업장을 묻지 않게)
+          if (home.verdict() == Verdict.NOT_MET) {
+            yield site;
+          }
+          if (site.verdict() == Verdict.NOT_MET) {
+            yield home;
+          }
           Set<Input> missing = new LinkedHashSet<>(home.missing());
           missing.addAll(site.missing());
           yield Evaluation.unknown(c, summary, "주소지나 사업장 소재지를 더 넣어야 알 수 있어요", missing);
@@ -110,8 +117,7 @@ final class PersonRules {
     }
     Verdict verdict = RegionCodes.withinAny(a.residenceRegionCode(), codes);
     if (verdict == Verdict.UNKNOWN) {
-      return Evaluation.unknown(
-          c, summary, "주소지를 더 자세히(시군구까지) 넣어야 알 수 있어요", Input.RESIDENCE_REGION);
+      return finer(c, summary, "주소지", a.residenceRegionCode(), Input.RESIDENCE_REGION);
     }
     return Evaluation.decided(c, verdict == Verdict.MET, summary);
   }
@@ -127,10 +133,19 @@ final class PersonRules {
     }
     Verdict verdict = RegionCodes.withinAny(business.siteRegionCode(), codes);
     if (verdict == Verdict.UNKNOWN) {
-      return Evaluation.unknown(
-          c, summary, "사업장 소재지를 더 자세히(시군구까지) 넣어야 알 수 있어요", Input.BUSINESS_SITE);
+      return finer(c, summary, "사업장 소재지", business.siteRegionCode(), Input.BUSINESS_SITE);
     }
     return Evaluation.decided(c, verdict == Verdict.MET, summary);
+  }
+
+  /** 지역을 덜 자세히 넣어 모를 때: 더 넣을 단계(시군구·구)를 묻고, 조건이 읍·면·동 단위라 넣을 수 없으면 원문을 보게 해요. */
+  private static Evaluation finer(
+      Criterion c, String summary, String place, String code, Input input) {
+    String level = RegionCodes.finerLevel(code);
+    if (level == null) {
+      return Evaluation.unknown(c, summary, "읍·면·동까지는 원문에서 확인해 주세요");
+    }
+    return Evaluation.unknown(c, summary, place + "를 더 자세히(" + level + "까지) 넣어야 알 수 있어요", input);
   }
 
   static Evaluation marriage(Marriage c, Applicant a, LocalDate on) {

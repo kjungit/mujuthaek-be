@@ -128,12 +128,37 @@ class BenefitSearchApiTest {
     mvc.perform(
             post("/api/v1/benefits/{id}/evaluate", id)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"applicant\":{\"birthMonth\":\"1997-03\"}}"))
+                .content(
+                    "{\"applicant\":{\"birthMonth\":\"1997-03\",\"regionCode\":\""
+                        + region
+                        + "\"}}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.overall").value("ELIGIBLE"))
         .andExpect(jsonPath("$.conditions[0].items[0].key").value("AGE"))
         .andExpect(jsonPath("$.conditions[0].items[0].status").value("MET"))
+        .andExpect(jsonPath("$.conditions[1].items[0].key").value("REGION"))
+        .andExpect(jsonPath("$.conditions[1].items[0].status").value("MET"))
         .andExpect(jsonPath("$.annualAmountWon").value(2_400_000));
+
+    // 지역 한정 혜택은 사는 곳이 없으면 지원 가능으로 두지 않고 사는 곳을 물어요 (2026-11-02 운영: 다른 지역 혜택이 지원 가능)
+    mvc.perform(
+            post("/api/v1/benefits/{id}/evaluate", id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"applicant\":{\"birthMonth\":\"1997-03\"}}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.overall").value("NEEDS_INPUT"))
+        .andExpect(jsonPath("$.conditions[1].items[0].needs[0]").value("applicant.regionCode"));
+
+    // 다른 지역에 살면 지원 불가가 아니라 확인 필요이고, 넣을 값이 없어요 (원문 확인)
+    mvc.perform(
+            post("/api/v1/benefits/{id}/evaluate", id)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"applicant\":{\"birthMonth\":\"1997-03\",\"regionCode\":\"11440\"}}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.overall").value("NEEDS_INPUT"))
+        .andExpect(jsonPath("$.conditions[1].items[0].key").value("REGION"))
+        .andExpect(jsonPath("$.conditions[1].items[0].status").value("UNKNOWN"))
+        .andExpect(jsonPath("$.conditions[1].items[0].needs").isEmpty());
 
     mvc.perform(
             post("/api/v1/benefits/{id}/evaluate", UUID.randomUUID())

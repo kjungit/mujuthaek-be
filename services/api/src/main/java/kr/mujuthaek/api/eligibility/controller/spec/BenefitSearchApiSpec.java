@@ -38,6 +38,8 @@ public interface BenefitSearchApiSpec {
       summary = "혜택 하나 판정",
       description =
           "조건 그룹별 결과를 원문 순서로 줘요. 그룹 안 조건은 하나만 충족해도 되고, 그룹은 모두 충족해야 해요. "
+              + "혜택 지역이 시도·시군구로 정해졌는데 거주 조건 줄이 없으면 맨 뒤에 지역 그룹(key REGION, label 「지역 · 지역 이름」)을 더해요. "
+              + "사는 곳이 그 지역 밖이면 지원 불가가 아니라 확인 필요예요. "
               + "overall은 ELIGIBLE(지원 가능) · NEEDS_INPUT(확인 필요) · INELIGIBLE(지원 불가)이에요. "
               + "사람 확인 전 혜택은 지원 가능이어도 확인 필요로 두고 reason에 이유를 줘요. "
               + "notes는 판정하지 않는 안내(중복 수혜 불가, 선정 우선순위)예요.")

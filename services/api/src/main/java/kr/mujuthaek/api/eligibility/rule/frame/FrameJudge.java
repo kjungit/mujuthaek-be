@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import kr.mujuthaek.api.eligibility.rule.BaseValues;
 import kr.mujuthaek.api.eligibility.rule.Eligibility;
@@ -28,8 +29,23 @@ import kr.mujuthaek.api.eligibility.rule.frame.FrameJudgment.Question;
  * </ol>
  *
  * <p>모르는 값이 섞여도 결과가 정해지면 정해요. 예: 불충족 조건이 하나 있으면 나머지를 몰라도 그 대상군은 불충족이에요.
+ *
+ * <p>지원 가능으로 두지 않는 두 경우 (2026-11-02 운영 창업지원 사업이 서울 사용자에게 지원 가능으로 나왔던 것):
+ *
+ * <ul>
+ *   <li>공통 조건도 그 대상군 조건도 없는 대상군: 조건을 못 읽은 것과 조건이 없는 것을 틀이 가르지 못해서 원문을 보게 해요 (「미디어 청년창업 지원」). 주거
+ *       판정(rule/Judge)도 같은 대상을 확인 필요로 둬요
+ *   <li>틀에 지역 조건이 없는 사업의 지원 지역: 사는 곳이 그 지역 밖이면 확인 필요예요. 지원 지역이 꼭 거주 요건은 아니라서 지원 불가로는 내리지 않아요 (「충북
+ *       창업인재 지원사업」). 지역 조건이 일부 대상군에만 있으면 지역 조건이 없는 대상군에 더해요
+ * </ul>
  */
 public final class FrameJudge {
+
+  /** 공통 조건도 대상군 조건도 없는 대상군에 붙이는 항목의 ID 끝 (대상군 ID + 이 값). */
+  public static final String UNREAD_GROUP = "-unread";
+
+  /** 틀에 지역 조건이 없는 사업의 지원 지역 항목 ID. */
+  public static final String PROGRAM_REGION = "program-region";
 
   private final HousingRules housing;
 
@@ -53,13 +69,35 @@ public final class FrameJudge {
    * @param judgedOn 판정하는 날. 틀에 기준일(referenceDate)이 없으면(기준일 문구가 없는 창업지원 공고) 이날 기준으로 계산해요
    */
   public FrameJudgment judge(Frame frame, Applicant applicant, LocalDate judgedOn) {
+    return judge(frame, applicant, judgedOn, null);
+  }
+
+  /**
+   * @param judgedOn 판정하는 날 (틀에 기준일이 없을 때)
+   * @param programRegions 사업의 지원 지역 법정동코드 (창업지원 사업). 전국이면 빈 목록, 모르면 null이고 둘 다 지역을 보지 않아요
+   */
+  public FrameJudgment judge(
+      Frame frame, Applicant applicant, LocalDate judgedOn, List<String> programRegions) {
     LocalDate day = frame.referenceDate() != null ? frame.referenceDate() : judgedOn;
-    List<Evaluation> common = evaluateAll(frame.common(), applicant, day);
+    List<Evaluation> common = new ArrayList<>(evaluateAll(frame.common(), applicant, day));
+    // 지역 조건이 일부 대상군에만 있으면 지원 지역은 지역 조건이 없는 대상군에만 더해요
+    boolean regionInGroups = frame.groups().stream().anyMatch(g -> hasRegion(g.criteria()));
+    Optional<Evaluation> program =
+        hasRegion(frame.common()) ? Optional.empty() : programRegion(programRegions, applicant);
+    if (!regionInGroups) {
+      program.ifPresent(common::add);
+    }
     List<Verdict> commonVerdicts = common.stream().map(Evaluation::verdict).toList();
 
     List<GroupResult> groups = new ArrayList<>();
     for (Frame.Group group : frame.groups()) {
-      List<Evaluation> criteria = evaluateAll(group.criteria(), applicant, day);
+      List<Evaluation> criteria = new ArrayList<>(evaluateAll(group.criteria(), applicant, day));
+      if (regionInGroups && !hasRegion(group.criteria())) {
+        program.ifPresent(criteria::add);
+      }
+      if (frame.common().isEmpty() && group.criteria().isEmpty()) {
+        criteria.add(unread(group));
+      }
       List<Verdict> verdicts = new ArrayList<>(commonVerdicts);
       criteria.forEach(e -> verdicts.add(e.verdict()));
       groups.add(new GroupResult(group, Verdict.all(verdicts), criteria));
@@ -87,7 +125,56 @@ public final class FrameJudge {
         preferences,
         frame.notes(),
         questions(frame, applicant),
-        result == Eligibility.NEEDS_INPUT ? missingInputs(common, groups) : List.of());
+        result == Eligibility.NEEDS_INPUT ? missingInputs(common, groups, applicant) : List.of());
+  }
+
+  /**
+   * 조건이 하나도 없는 대상군: 지원 가능으로 두지 않고 원문을 보게 해요. 조건을 못 읽었는지 정말 없는지는 모르니 정리된 조건이 없다고만 말해요. 입력으로 풀리지 않아서
+   * missing은 비워요.
+   */
+  private static Evaluation unread(Frame.Group group) {
+    String label = "이 대상에는 정리된 자격 조건이 없어요";
+    Criterion.Ask ask =
+        new Criterion.Ask(
+            new Criterion.Meta(group.id() + UNREAD_GROUP, null, null, false, null, null),
+            label,
+            Answer.YES);
+    return Evaluation.unknown(ask, label, "원문에서 이 대상의 자격 조건을 확인해 주세요");
+  }
+
+  /**
+   * 틀에 지역 조건이 없는데 지원 지역이 전국이 아닌 사업: 주소지나 사업장이 지원 지역 안이면 충족, 밖이면 확인 필요. 사업장 소재지는 상세 항목에만 묻고 목록의
+   * missingInputs에는 넣지 않아요 ({@link #missingInputs}).
+   */
+  private static Optional<Evaluation> programRegion(List<String> regions, Applicant a) {
+    if (regions == null || regions.isEmpty()) {
+      return Optional.empty();
+    }
+    Criterion.Region region =
+        new Criterion.Region(
+            new Criterion.Meta(PROGRAM_REGION, null, null, false, null, null),
+            Criterion.RegionBasis.RESIDENCE_OR_BUSINESS_SITE,
+            regions);
+    Evaluation evaluation = PersonRules.region(region, a);
+    if (evaluation.verdict() != Verdict.NOT_MET) {
+      return Optional.of(evaluation);
+    }
+    return Optional.of(
+        Evaluation.unknown(
+            region, evaluation.summary(), "지원 지역이 사는 곳과 달라요. 다른 지역 사람도 신청할 수 있는지 원문에서 확인해 주세요"));
+  }
+
+  private static boolean hasRegion(List<Criterion> criteria) {
+    for (Criterion c : criteria) {
+      if (c instanceof Criterion.Region || c instanceof Criterion.Residence) {
+        return true;
+      }
+      if (c instanceof Criterion.AnyOf any
+          && any.options().stream().anyMatch(o -> hasRegion(o.criteria()))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** 내 순위: 충족한 대상군 중 가장 앞 순위. 1순위는 불충족, 2순위는 충족이면 2예요. */
@@ -179,17 +266,40 @@ public final class FrameJudge {
     }
   }
 
-  /** 결과가 확인 필요일 때만: 아직 정해지지 않은 대상군과 공통 조건이 필요로 하는 입력. */
-  private static List<Input> missingInputs(List<Evaluation> common, List<GroupResult> groups) {
+  /**
+   * 결과가 확인 필요일 때만: 아직 정해지지 않은 대상군과 공통 조건이 필요로 하는 입력. 정리된 조건이 없는 대상군은 입력으로 풀리지 않아서 세지 않고, 그런 대상군만
+   * 남으면 비워요. 지원 지역 항목은 사업장 소재지를 아예 안 넣었을 때 그 칸을 빼요. 지역 밖 사업마다 붙어서 화면의 「사업장 소재지를 알려주면 N개를 더 판정」이
+   * 부풀고, 사업장이 그 지역 밖이면 넣어도 확인 필요라서예요.
+   */
+  private static List<Input> missingInputs(
+      List<Evaluation> common, List<GroupResult> groups, Applicant a) {
+    List<GroupResult> open =
+        groups.stream()
+            .filter(g -> g.verdict() == Verdict.UNKNOWN)
+            .filter(g -> g.criteria().stream().noneMatch(FrameJudge::unread))
+            .toList();
+    if (open.isEmpty()) {
+      return List.of();
+    }
     Set<Input> missing = new LinkedHashSet<>();
     common.stream()
         .filter(e -> e.verdict() == Verdict.UNKNOWN)
-        .forEach(e -> missing.addAll(e.missing()));
-    groups.stream()
-        .filter(g -> g.verdict() == Verdict.UNKNOWN)
+        .forEach(e -> missing.addAll(listed(e, a)));
+    open.stream()
         .flatMap(g -> g.criteria().stream())
         .filter(e -> e.verdict() == Verdict.UNKNOWN)
-        .forEach(e -> missing.addAll(e.missing()));
+        .forEach(e -> missing.addAll(listed(e, a)));
     return List.copyOf(missing);
+  }
+
+  private static boolean unread(Evaluation e) {
+    return e.criterion().id() != null && e.criterion().id().endsWith(UNREAD_GROUP);
+  }
+
+  private static List<Input> listed(Evaluation e, Applicant a) {
+    if (!PROGRAM_REGION.equals(e.criterion().id()) || a.business().siteRegionCode() != null) {
+      return e.missing();
+    }
+    return e.missing().stream().filter(i -> i != Input.BUSINESS_SITE).toList();
   }
 }

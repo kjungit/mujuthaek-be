@@ -94,7 +94,8 @@ class BenefitJudgeAllTest {
   @Test
   void cachedConditionsGiveTheSameJudgmentAndAChangedBenefitIsReadAgain() {
     seedBenefits();
-    Applicant applicant = new ApplicantBuilder().birthMonth(1991, 6).build();
+    // 시험 혜택의 지역에 사는 사람이에요. 지역 한정 혜택은 사는 곳이 없으면 확인 필요라서요
+    Applicant applicant = new ApplicantBuilder().birthMonth(1991, 6).region(region).build();
 
     var first = prefiltered(applicant);
     var second = prefiltered(applicant); // 두 번째는 캐시의 조건으로

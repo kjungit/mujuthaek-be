@@ -2,6 +2,7 @@ package kr.mujuthaek.api.eligibility.rule.frame;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
@@ -9,6 +10,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
 import java.util.Set;
+import java.util.stream.Collectors;
+import kr.mujuthaek.api.common.region.RegionLoader;
 import kr.mujuthaek.api.eligibility.rule.BaseValues;
 import kr.mujuthaek.api.eligibility.rule.Eligibility;
 import kr.mujuthaek.api.eligibility.rule.Field;
@@ -584,5 +587,328 @@ class RulesTest {
             null,
             Map.of());
     assertThat(judge.judge(frame, merited).missingInputs()).as("지원 가능이면 비어 있어요").isEmpty();
+  }
+
+  // ── 지원 가능으로 두지 않는 틀 (2026-11-02 운영 창업지원 사업이 서울 사용자에게 지원 가능) ──
+
+  private static final FrameJudge PLAIN =
+      new FrameJudge(
+          (k, y, p, s) -> OptionalLong.empty(), (d, region, area) -> OptionalLong.empty());
+
+  private static Frame support(List<Criterion> common, Frame.Group... groups) {
+    return new Frame(
+        Field.STARTUP_SUPPORT, "p", 1, null, common, List.of(groups), List.of(), List.of());
+  }
+
+  /** 마포구에 사는 1996년생 예비창업자 (사업장 없음). */
+  private static Applicant mapoPreFounder() {
+    return applicant(
+        LocalDate.of(1996, 5, 20),
+        "1144000000",
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        business(false, null, List.of(), null));
+  }
+
+  @Test
+  void groupWithNoCriteriaAndNoCommonIsNotEligible() {
+    // 2026-11-02 운영 「미디어 청년창업 지원」: 「전체」 대상군에 조건이 하나도 없어 누구에게나 지원 가능이었어요
+    Frame frame = support(List.of(), new Frame.Group("all", "전체", null, List.of()));
+    FrameJudgment j = PLAIN.judge(frame, mapoPreFounder(), DAY);
+    assertThat(j.result()).isEqualTo(Eligibility.NEEDS_INPUT);
+    Evaluation unread = j.groups().getFirst().criteria().getFirst();
+    assertThat(unread.criterion().id()).isEqualTo("all" + FrameJudge.UNREAD_GROUP);
+    assertThat(unread.verdict()).isEqualTo(Verdict.UNKNOWN);
+    assertThat(unread.summary()).isEqualTo("이 대상에는 정리된 자격 조건이 없어요");
+    assertThat(unread.reason()).isEqualTo("원문에서 이 대상의 자격 조건을 확인해 주세요");
+    assertThat(j.missingInputs()).as("입력으로 풀리지 않아요").isEmpty();
+    assertThat(j.questions()).as("사용자에게 묻는 질문으로 내보내지 않아요").isEmpty();
+  }
+
+  @Test
+  void emptyGroupKeepsCommonCriteriaAndOtherGroupsDecide() {
+    Criterion.Age youth = new Criterion.Age(meta("age"), 19, 39);
+    assertThat(
+            PLAIN
+                .judge(
+                    support(List.of(youth), new Frame.Group("all", "전체", null, List.of())),
+                    mapoPreFounder(),
+                    DAY)
+                .result())
+        .as("공통 조건이 있으면 그 조건으로 판정해요")
+        .isEqualTo(Eligibility.ELIGIBLE);
+    FrameJudgment j =
+        PLAIN.judge(
+            support(
+                List.of(),
+                new Frame.Group("all", "전체", null, List.of()),
+                new Frame.Group("youth", "청년", null, List.of(youth))),
+            mapoPreFounder(),
+            DAY);
+    assertThat(j.result()).as("조건을 읽은 다른 대상군이 충족이면 지원 가능").isEqualTo(Eligibility.ELIGIBLE);
+    assertThat(j.groups().get(1).criteria()).hasSize(1);
+  }
+
+  @Test
+  void programOutsideTheRegionIsUnknownNotIneligible() {
+    // 2026-11-02 운영 「충북 창업인재 지원사업」: 틀에 지역 조건이 없어 서울 사용자에게 지원 가능이었어요
+    Criterion.Age youth = new Criterion.Age(meta("age"), 19, 39);
+    Frame frame = support(List.of(youth), new Frame.Group("all", "전체", null, List.of()));
+    FrameJudgment j = PLAIN.judge(frame, mapoPreFounder(), DAY, List.of("4311100000"));
+    assertThat(j.result()).isEqualTo(Eligibility.NEEDS_INPUT);
+    Evaluation region = j.common().getLast();
+    assertThat(region.criterion().id()).isEqualTo(FrameJudge.PROGRAM_REGION);
+    assertThat(region.criterion().kind()).isEqualTo("REGION");
+    assertThat(region.verdict()).isEqualTo(Verdict.UNKNOWN);
+    assertThat(region.reason()).isEqualTo("지원 지역이 사는 곳과 달라요. 다른 지역 사람도 신청할 수 있는지 원문에서 확인해 주세요");
+    assertThat(region.missing()).isEmpty();
+  }
+
+  @Test
+  void programRegionGoesToGroupsWithoutTheirOwnRegion() {
+    // 추출이 지역을 일부 대상군에만 읽은 틀: 지역 조건이 없는 대상군이 지원 지역 없이 지원 가능이 되지 않아요
+    Criterion.Age youth = new Criterion.Age(meta("age"), 19, 39);
+    Criterion.Region busanSite =
+        new Criterion.Region(
+            meta("region"), Criterion.RegionBasis.BUSINESS_SITE, List.of("2600000000"));
+    Frame frame =
+        support(
+            List.of(youth),
+            new Frame.Group("pre", "예비창업자", null, List.of(new Criterion.Age(meta("age2"), 19, 39))),
+            new Frame.Group("startup", "창업기업", null, List.of(busanSite)));
+    FrameJudgment j = PLAIN.judge(frame, mapoPreFounder(), DAY, List.of("2611000000"));
+    assertThat(j.result()).isEqualTo(Eligibility.NEEDS_INPUT);
+    assertThat(j.common()).as("공통에는 더하지 않아요").hasSize(1);
+    assertThat(j.groups().get(0).criteria().getLast().criterion().id())
+        .isEqualTo(FrameJudge.PROGRAM_REGION);
+    assertThat(j.groups().get(1).criteria())
+        .extracting(e -> e.criterion().id())
+        .doesNotContain(FrameJudge.PROGRAM_REGION);
+  }
+
+  @Test
+  void citiesWithDistrictsMatchTheBundledCodeTable() throws IOException {
+    // 코드표가 바뀌어 일반구를 둔 시가 늘거나 줄면 목록도 같이 고쳐요 (빠지면 그 시의 구 주민이 시 조건에서 다른 지역이 돼요)
+    Set<String> cities =
+        RegionLoader.bundled()
+            .text()
+            .lines()
+            .map(line -> line.split(","))
+            .filter(row -> row.length >= 3 && "존재".equals(row[2].trim()))
+            .filter(row -> row[0].matches("\\d{5}00000"))
+            .filter(
+                row -> {
+                  String[] names = row[1].trim().split("\\s+");
+                  return names.length == 3 && names[1].endsWith("시") && names[2].endsWith("구");
+                })
+            .map(row -> row[0].substring(0, 4) + "0")
+            .collect(Collectors.toSet());
+    assertThat(cities).isEqualTo(RegionCodes.CITIES_WITH_DISTRICTS);
+  }
+
+  @Test
+  void finerLevelAsksOnlyWhatTheScreenCanTake() {
+    assertThat(RegionCodes.finerLevel("4100000000")).isEqualTo("시군구");
+    assertThat(RegionCodes.finerLevel("43")).as("사업 정보의 시·도 「전체」").isEqualTo("시군구");
+    assertThat(RegionCodes.finerLevel("43110")).isEqualTo("구");
+    assertThat(RegionCodes.finerLevel("11440")).as("화면은 시군구까지만 받아요").isNull();
+    Applicant mapo =
+        applicant(
+            LocalDate.of(1996, 5, 20), "1144000000", null, null, null, null, null, null, null);
+    Evaluation dong =
+        PersonRules.region(
+            new Criterion.Region(
+                meta("dong"), Criterion.RegionBasis.RESIDENCE, List.of("1144012000")),
+            mapo);
+    assertThat(dong.verdict()).isEqualTo(Verdict.UNKNOWN);
+    assertThat(dong.reason()).isEqualTo("읍·면·동까지는 원문에서 확인해 주세요");
+    assertThat(dong.missing()).as("넣을 수 없는 단계는 묻지 않아요").isEmpty();
+    Applicant chungbukSite =
+        applicant(
+            LocalDate.of(1996, 5, 20),
+            "1144000000",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            business(true, "43", List.of(), null));
+    assertThat(
+            PersonRules.region(
+                    new Criterion.Region(
+                        meta("site"), Criterion.RegionBasis.BUSINESS_SITE, List.of("4311100000")),
+                    chungbukSite)
+                .reason())
+        .isEqualTo("사업장 소재지를 더 자세히(시군구까지) 넣어야 알 수 있어요");
+  }
+
+  @Test
+  void listInputsSkipGroupsThatInputsCannotSettle() {
+    // 정리된 조건이 없는 대상군만 남으면 주소지를 넣어도 확인 필요라 목록에서 묻지 않아요 (2026-11-02 운영 「충북 창업인재 지원사업」 모양)
+    Frame empty = support(List.of(), new Frame.Group("all", "전체", null, List.of()));
+    Applicant noAddress =
+        applicant(
+            LocalDate.of(1996, 5, 20),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            business(false, null, List.of(), null));
+    FrameJudgment j = PLAIN.judge(empty, noAddress, DAY, List.of("4311100000"));
+    assertThat(j.result()).isEqualTo(Eligibility.NEEDS_INPUT);
+    assertThat(j.common().getLast().missing())
+        .as("상세에는 남아요")
+        .containsExactly(Input.RESIDENCE_REGION);
+    assertThat(j.missingInputs()).isEmpty();
+  }
+
+  @Test
+  void enteredButCoarseSiteStaysInTheList() {
+    // 사업장을 「경북 전체」로 넣었으면 시군구까지 넣으면 판정되니 목록에서도 물어요 (문경 사업)
+    Criterion.Age youth = new Criterion.Age(meta("age"), 19, 45);
+    Frame frame = support(List.of(youth), new Frame.Group("all", "전체", null, List.of()));
+    Applicant coarseSite =
+        applicant(
+            LocalDate.of(1996, 5, 20),
+            "1144000000",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            business(true, "47", List.of(), null));
+    FrameJudgment j = PLAIN.judge(frame, coarseSite, DAY, List.of("4728000000"));
+    assertThat(j.common().getLast().reason()).isEqualTo("사업장 소재지를 더 자세히(시군구까지) 넣어야 알 수 있어요");
+    assertThat(j.missingInputs()).containsExactly(Input.BUSINESS_SITE);
+  }
+
+  @Test
+  void outsideProgramDoesNotAskForTheSiteInTheList() {
+    // 사업 중인데 사업장을 비운 서울 사용자: 지역 밖 사업마다 「사업장 소재지를 넣으면 판정돼요」가 붙어 배너 숫자가 부풀지 않게
+    Criterion.Age youth = new Criterion.Age(meta("age"), 19, 39);
+    Frame frame = support(List.of(youth), new Frame.Group("all", "전체", null, List.of()));
+    Applicant noSite =
+        applicant(
+            LocalDate.of(1996, 5, 20),
+            "1144000000",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            business(null, null, List.of(), null));
+    FrameJudgment j = PLAIN.judge(frame, noSite, DAY, List.of("4311100000"));
+    assertThat(j.result()).isEqualTo(Eligibility.NEEDS_INPUT);
+    assertThat(j.common().getLast().missing()).as("상세 항목에는 남아요").contains(Input.BUSINESS_SITE);
+    assertThat(j.missingInputs()).isEmpty();
+  }
+
+  @Test
+  void cityAndItsDistrictsAreTheSameRegion() {
+    // 일반구를 둔 시(41110 수원시 · 41117 영통구)는 앞 4자리가 같고 시만 5번째 자리가 0이에요
+    assertThat(RegionCodes.within("41117", "41110")).isEqualTo(Verdict.MET);
+    assertThat(RegionCodes.within("4111710100", "4111000000")).isEqualTo(Verdict.MET);
+    // 앞 4자리가 같아도 군끼리는 다른 지역이에요 (43740 영동군 · 43745 증평군)
+    assertThat(RegionCodes.within("43745", "43740")).isEqualTo(Verdict.NOT_MET);
+    assertThat(RegionCodes.within("4374500000", "4374000000")).isEqualTo(Verdict.NOT_MET);
+    assertThat(RegionCodes.within("43740", "43745")).isEqualTo(Verdict.NOT_MET);
+    assertThat(RegionCodes.within("43110", "4311100000"))
+        .as("시만 넣으면 구까지 넣어야 알아요")
+        .isEqualTo(Verdict.UNKNOWN);
+    assertThat(RegionCodes.within("41110", "41117")).isEqualTo(Verdict.UNKNOWN);
+    assertThat(RegionCodes.within("41130", "41110")).as("다른 시").isEqualTo(Verdict.NOT_MET);
+    assertThat(RegionCodes.within("11140", "11110")).as("특별시의 자치구끼리").isEqualTo(Verdict.NOT_MET);
+    Criterion.Age youth = new Criterion.Age(meta("age"), 19, 39);
+    Frame frame = support(List.of(youth), new Frame.Group("all", "전체", null, List.of()));
+    Applicant cheongjuCity =
+        applicant(
+            LocalDate.of(1996, 5, 20),
+            "4311000000",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            business(false, null, List.of(), null));
+    Evaluation region =
+        PLAIN
+            .judge(frame, cheongjuCity, DAY, List.of("4311100000", "4311200000"))
+            .common()
+            .getLast();
+    assertThat(region.verdict()).isEqualTo(Verdict.UNKNOWN);
+    assertThat(region.missing())
+        .as("다른 지역이 아니라 구까지 넣으면 판정돼요")
+        .containsExactly(Input.RESIDENCE_REGION);
+    assertThat(region.reason()).as("사업장이 없다고 했으니 주소지 안내만").isEqualTo("주소지를 더 자세히(구까지) 넣어야 알 수 있어요");
+    assertThat(
+            PersonRules.region(
+                    new Criterion.Region(
+                        meta("home"), Criterion.RegionBasis.RESIDENCE, List.of("4311100000")),
+                    cheongjuCity)
+                .reason())
+        .as("시군구는 이미 골랐으니 구까지")
+        .isEqualTo("주소지를 더 자세히(구까지) 넣어야 알 수 있어요");
+  }
+
+  @Test
+  void programRegionIsMetWhenTheApplicantLivesThere() {
+    Criterion.Age youth = new Criterion.Age(meta("age"), 19, 39);
+    Frame frame = support(List.of(youth), new Frame.Group("all", "전체", null, List.of()));
+    Applicant cheongju =
+        applicant(
+            LocalDate.of(1996, 5, 20),
+            "4311100000",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            business(false, null, List.of(), null));
+    FrameJudgment j = PLAIN.judge(frame, cheongju, DAY, List.of("4300000000"));
+    assertThat(j.result()).isEqualTo(Eligibility.ELIGIBLE);
+    assertThat(j.common().getLast().verdict()).isEqualTo(Verdict.MET);
+  }
+
+  @Test
+  void programRegionAsksForAddressOrSiteWhenUnknown() {
+    Criterion.Age youth = new Criterion.Age(meta("age"), 19, 39);
+    Frame frame = support(List.of(youth), new Frame.Group("all", "전체", null, List.of()));
+    Applicant noAddress =
+        applicant(LocalDate.of(1996, 5, 20), null, null, null, null, null, null, null, null);
+    FrameJudgment j = PLAIN.judge(frame, noAddress, DAY, List.of("4300000000"));
+    Evaluation region = j.common().getLast();
+    assertThat(region.verdict()).isEqualTo(Verdict.UNKNOWN);
+    assertThat(region.missing()).containsExactly(Input.RESIDENCE_REGION, Input.BUSINESS_SITE);
+    assertThat(j.missingInputs())
+        .as("주소지는 넣으면 판정되니 목록에도 남기고, 사업장은 상세에만 물어요")
+        .containsExactly(Input.RESIDENCE_REGION);
+  }
+
+  @Test
+  void nationwideUnknownOrAlreadyRegionalProgramsAddNothing() {
+    Criterion.Age youth = new Criterion.Age(meta("age"), 19, 39);
+    Frame plain = support(List.of(youth), new Frame.Group("all", "전체", null, List.of()));
+    assertThat(PLAIN.judge(plain, mapoPreFounder(), DAY, List.of()).common()).hasSize(1);
+    assertThat(PLAIN.judge(plain, mapoPreFounder(), DAY, null).common()).hasSize(1);
+    Criterion.Region chungbuk =
+        new Criterion.Region(
+            meta("region"), Criterion.RegionBasis.RESIDENCE, List.of("4300000000"));
+    Frame regional =
+        support(List.of(youth, chungbuk), new Frame.Group("all", "전체", null, List.of()));
+    FrameJudgment j = PLAIN.judge(regional, mapoPreFounder(), DAY, List.of("4300000000"));
+    assertThat(j.common()).as("틀의 지역 조건이 이미 지역을 봐요").hasSize(2);
+    assertThat(j.result()).as("틀의 지역 조건은 그대로 지원 불가").isEqualTo(Eligibility.INELIGIBLE);
   }
 }
