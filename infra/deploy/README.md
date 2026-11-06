@@ -4,8 +4,8 @@
 
 | 서버 | 서비스 | 배포 |
 | --- | --- | --- |
-| prod (3.37.131.73) | rabbitmq · nginx · api · notification · collector · extraction | 태그 `api-v1.2.0` 등 → `release.yml` |
-| dev (52.79.106.144) | rabbitmq(shovel) · nginx · api · notification · extraction (수집기 없음) | `dev` 브랜치 push → `deploy-dev.yml` |
+| prod | rabbitmq · nginx · api · notification · collector · extraction | 태그 `api-v1.2.0` 등 → `release.yml` |
+| dev | rabbitmq(shovel) · nginx · api · notification · extraction (수집기 없음) | `dev` 브랜치 push → `deploy-dev.yml` |
 
 ## 서버 폴더 `/opt/mujuthaek`
 ```
@@ -186,6 +186,7 @@ peek mujuthaek.raw.policy.dlq
 ## 주의
 - `.env` 값에 `$`가 있으면 compose가 변수로 읽어요. 암호에 `$`를 쓰지 않거나 `$$`로 써요
 - 파이썬 워커의 RabbitMQ 주소는 `amqp://RABBITMQ_USER:RABBITMQ_PASSWORD@rabbitmq:5672/`로 만들어요. 암호에 `@ : / ? #`가 있으면 안 돼요
+- 서버 주소는 저장소에 적지 않아요. 운영 ENV_FILE에 `PROD_PRIVATE_IP`(운영 서버 사설 IP, RabbitMQ 5672를 여기에만 열어요)를 넣고, `shovel.sh dev`는 `PROD_HOST=<운영 사설 IP>`로 실행해요
 - Flyway 계정은 기본 `collector_app`·`extraction_app`이에요. 다르면 ENV_FILE에 `COLLECTOR_DB_USER`·`EXTRACTION_DB_USER`를 넣어요
 - 관리 화면(15672)·api(8080)·notification(8081)은 서버 안(127.0.0.1)에서만 열려요. 밖에서는 nginx(:80)만
 

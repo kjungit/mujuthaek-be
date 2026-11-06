@@ -12,7 +12,7 @@
 set -euo pipefail
 
 BASE="${MUJUTHAEK_DIR:-/opt/mujuthaek}"
-PROD_HOST="10.20.5.63"
+PROD_HOST="${PROD_HOST:-}"   # 운영 서버 사설 IP. dev 모드에서 필요해요 (예: PROD_HOST=10.x.x.x ./shovel.sh dev)
 EXCHANGE="mujuthaek.events"
 QUEUE="dev.mirror"
 RESULT_KEYS=(extraction.completed policy.extracted area.source.ready)
@@ -120,6 +120,7 @@ for b in json.load(sys.stdin):
   call PUT "/permissions/%2F/shovel" '{"configure":"^dev\\.mirror$","write":"^$","read":"^dev\\.mirror$"}'
   echo "운영 설정 끝($MODE): $QUEUE ← $EXCHANGE (${ROUTING_KEYS[*]}), 계정 shovel"
 else
+  [ -n "$PROD_HOST" ] || { echo "운영 서버 사설 IP를 PROD_HOST로 넣어요 (예: PROD_HOST=10.x.x.x $0 dev)" >&2; exit 2; }
   src_uri="$(SHOVEL_PASS="$SHOVEL_PASS" python3 -c 'import os, urllib.parse; print("amqp://shovel:" + urllib.parse.quote(os.environ["SHOVEL_PASS"], safe="") + "@'"$PROD_HOST"':5672")')"
   body="$(SRC_URI="$src_uri" python3 -c '
 import json, os, sys

@@ -4,7 +4,7 @@
 
 ```
 노트북                                         운영 EC2 (127.0.0.1에만 열림)
- k6 ──────── http://3.37.131.73 (nginx) ────▶ api
+ k6 ──────── http://<EC2 공인 IP> (nginx) ─▶ api
  Prometheus ◀─ SSH 터널(tunnel.sh) ─────────── api·notification /actuator/prometheus, node-exporter, cAdvisor
  Grafana(3300) + 이미지 렌더러                  RDS ◀─ server.sh가 서버 안에서 psql (pg_stat_statements)
 ```

@@ -4,7 +4,7 @@
 #   perf/k6/fetch-data.sh [BASE_URL]
 set -euo pipefail
 
-BASE_URL="${1:-${BASE_URL:-http://3.37.131.73}}"
+BASE_URL="${1:-${BASE_URL:-http://localhost:8080}}"
 OUT="$(cd "$(dirname "$0")" && pwd)/data/data.json"
 
 regions="$(curl -fsS "$BASE_URL/api/v1/regions")"

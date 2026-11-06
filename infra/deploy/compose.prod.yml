@@ -31,7 +31,7 @@ services:
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     ports:
       - "127.0.0.1:15672:15672"   # 관리 화면은 서버 안에서만 (ssh -L 15672:127.0.0.1:15672)
-      - "10.20.5.63:5672:5672"    # 사설 IP에만: dev 서버의 shovel이 dev.mirror를 읽어 가요 (보안 그룹도 dev만 허용)
+      - "${PROD_PRIVATE_IP:?.env에 운영 서버 사설 IP(PROD_PRIVATE_IP)가 없어요}:5672:5672"    # 사설 IP에만: dev 서버의 shovel이 dev.mirror를 읽어 가요 (보안 그룹도 dev만 허용)
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
     healthcheck:

@@ -10,8 +10,8 @@ if [ -f "$PERF_DIR/.env" ]; then
   set +a
 fi
 
-BASE_URL="${BASE_URL:-http://3.37.131.73}"
-EC2_HOST="${EC2_HOST:-3.37.131.73}"
+BASE_URL="${BASE_URL:-http://localhost:8080}"
+EC2_HOST="${EC2_HOST:-}"
 SSH_USER="${SSH_USER:-ubuntu}"
 SSH_KEY="${SSH_KEY:-}"
 SSH_KEY="${SSH_KEY/#\~/$HOME}"
@@ -23,6 +23,7 @@ REMOTE_DIR=/opt/mujuthaek
 warn() { echo "  ! $*" >&2; }
 
 remote() {
+  [ -n "$EC2_HOST" ] || { echo "perf/.env에 EC2_HOST를 넣어요" >&2; return 1; }
   local key=()
   [ -n "$SSH_KEY" ] && key=(-i "$SSH_KEY")
   ssh ${key[@]+"${key[@]}"} -o BatchMode=yes -o ConnectTimeout=10 "$SSH_USER@$EC2_HOST" "$@"
