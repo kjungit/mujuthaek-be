@@ -28,13 +28,3 @@ cd services/api && ./gradlew bootRun       # api
 | api | http://localhost:8080 (`/actuator/health`) |
 | RabbitMQ 관리 화면 | http://localhost:15672 |
 | MinIO (S3 API) | http://localhost:9000 (minio / minio-pass, 버킷 `mujuthaek-raw`) |
-
-## 담당
-| 담당자 | 맡는 폴더 |
-| --- | --- |
-| 담당자1 | `infra/`, `libs/`, `.github/`, `services/collector/` (sources/lh·policy 제외), api `common` |
-| 담당자2 | `services/extraction/` (rules/policy·startup_support 제외), api `notice` |
-| 담당자3 | api `benefit`·`user`·`notification`, `collector/.../sources/policy`, `extraction/.../rules/policy`·`startup_support` |
-| 담당자4 | api `eligibility`·`area`, `collector/.../sources/lh` |
-| 모두 | `contracts/`, api `common/event/` |
-  
